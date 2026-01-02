@@ -56,6 +56,17 @@ QOS_CLASS_UTILITY = _QOS_CLASS_UTILITY
 QOS_CLASS_BACKGROUND = _QOS_CLASS_BACKGROUND
 QOS_CLASS_UNSPECIFIED = _QOS_CLASS_UNSPECIFIED
 
+# Process event flags (from dispatch/source.h)
+DEF _DISPATCH_PROC_EXIT = 0x80000000
+DEF _DISPATCH_PROC_FORK = 0x40000000
+DEF _DISPATCH_PROC_EXEC = 0x20000000
+DEF _DISPATCH_PROC_SIGNAL = 0x08000000
+
+PROC_EXIT = _DISPATCH_PROC_EXIT
+PROC_FORK = _DISPATCH_PROC_FORK
+PROC_EXEC = _DISPATCH_PROC_EXEC
+PROC_SIGNAL = _DISPATCH_PROC_SIGNAL
+
 
 cdef extern from "time.h" nogil:
     ctypedef long time_t
@@ -104,6 +115,10 @@ cdef extern from "dispatch/dispatch.h" nogil:
 
     # Source type constants
     dispatch_source_type_t _dispatch_source_type_timer "DISPATCH_SOURCE_TYPE_TIMER"
+    dispatch_source_type_t _dispatch_source_type_signal "DISPATCH_SOURCE_TYPE_SIGNAL"
+    dispatch_source_type_t _dispatch_source_type_read "DISPATCH_SOURCE_TYPE_READ"
+    dispatch_source_type_t _dispatch_source_type_write "DISPATCH_SOURCE_TYPE_WRITE"
+    dispatch_source_type_t _dispatch_source_type_proc "DISPATCH_SOURCE_TYPE_PROC"
 
     # Main queue
     dispatch_queue_t dispatch_get_main_queue()
@@ -175,7 +190,16 @@ cdef extern from "dispatch/dispatch.h" nogil:
                                    uint64_t interval,
                                    uint64_t leeway)
     uintptr_t dispatch_source_get_data(dispatch_source_t source)
+    uintptr_t dispatch_source_get_handle(dispatch_source_t source)
+    uintptr_t dispatch_source_get_mask(dispatch_source_t source)
     void dispatch_set_context(dispatch_source_t obj, void* context)
+
+    # Queue hierarchy
+    void dispatch_set_target_queue(dispatch_queue_t object, dispatch_queue_t queue)
+
+    # QOS attributes
+    dispatch_queue_attr_t dispatch_queue_attr_make_with_qos_class(
+        dispatch_queue_attr_t attr, unsigned int qos_class, int relative_priority)
 
 
 # Trampoline function that acquires GIL and calls Python callable
@@ -244,13 +268,19 @@ cdef class Queue:
         self._queue = NULL
         self._owned = False
 
-    def __init__(self, str label=None, bint concurrent=False):
+    def __init__(self, str label=None, bint concurrent=False,
+                 int qos=_QOS_CLASS_UNSPECIFIED, int relative_priority=0,
+                 target=None):
         """
         Create a new dispatch queue.
 
         Args:
             label: Optional string label for debugging.
             concurrent: If True, create a concurrent queue. Default is serial.
+            qos: Quality of Service class (QOS_CLASS_* constants). Default is unspecified.
+            relative_priority: Priority offset within QOS class (-15 to 0). Default is 0.
+            target: Optional target queue for queue hierarchy. Tasks submitted to this
+                    queue will ultimately execute on the target queue.
         """
         cdef dispatch_queue_attr_t attr
         cdef const char* c_label = NULL
@@ -264,9 +294,19 @@ cdef class Queue:
         else:
             attr = NULL  # DISPATCH_QUEUE_SERIAL
 
+        # Apply QOS if specified
+        if qos != _QOS_CLASS_UNSPECIFIED:
+            with nogil:
+                attr = dispatch_queue_attr_make_with_qos_class(
+                    attr, <unsigned int>qos, relative_priority)
+
         with nogil:
             self._queue = dispatch_queue_create(c_label, attr)
         self._owned = True
+
+        # Set target queue if specified
+        if target is not None:
+            self.set_target_queue(target)
 
     def __dealloc__(self):
         if self._queue != NULL and self._owned:
@@ -319,6 +359,26 @@ cdef class Queue:
         if c_label == NULL:
             return None
         return c_label.decode('utf-8')
+
+    def set_target_queue(self, Queue target):
+        """
+        Set the target queue for this queue.
+
+        Tasks submitted to this queue will ultimately execute on the target queue.
+        This creates a queue hierarchy that can be used for priority management.
+
+        Note: The target queue should be set before any tasks are submitted.
+        Changing the target queue after tasks have been submitted may result
+        in undefined behavior.
+
+        Args:
+            target: The target queue, or None to reset to default.
+        """
+        cdef dispatch_queue_t target_q = NULL
+        if target is not None:
+            target_q = target._queue
+        with nogil:
+            dispatch_set_target_queue(self._queue, target_q)
 
     def run_async(self, func):
         """
@@ -870,3 +930,452 @@ cdef class Timer:
         with nogil:
             start_time = dispatch_time(_DISPATCH_TIME_NOW, start_delta_ns)
             dispatch_source_set_timer(self._source, start_time, interval_ns, leeway_ns)
+
+
+cdef class SignalSource:
+    """
+    Dispatch source for monitoring Unix signals.
+
+    Allows handling signals asynchronously on a dispatch queue instead of
+    using traditional signal handlers.
+
+    Important: You must disable the default signal behavior for the signal
+    you're monitoring (e.g., with signal.signal(sig, signal.SIG_IGN)).
+    """
+    cdef dispatch_source_t _source
+    cdef object _handler
+    cdef bint _started
+    cdef bint _cancelled
+    cdef int _signal
+
+    def __cinit__(self):
+        self._source = NULL
+        self._handler = None
+        self._started = False
+        self._cancelled = False
+        self._signal = 0
+
+    def __init__(self, int signum, handler, Queue queue=None):
+        """
+        Create a new signal source.
+
+        Args:
+            signum: The Unix signal number to monitor (e.g., signal.SIGINT).
+            handler: Callable to invoke when the signal is received.
+                     Receives no arguments.
+            queue: Queue to execute handler on. If None, uses default global queue.
+        """
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+
+        self._signal = signum
+        cdef dispatch_queue_t q
+        if queue is not None:
+            q = queue._queue
+        else:
+            q = NULL
+
+        # Create signal source
+        with nogil:
+            self._source = dispatch_source_create(
+                _dispatch_source_type_signal, <uintptr_t>signum, 0, q)
+
+        if self._source == NULL:
+            raise RuntimeError("Failed to create signal source")
+
+        # Store handler and set up callbacks
+        self._handler = handler
+        Py_INCREF(handler)
+
+        cdef PyObject* ctx = <PyObject*>handler
+        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+
+    def __dealloc__(self):
+        if self._source != NULL:
+            if not self._cancelled:
+                dispatch_source_cancel(self._source)
+            if not self._started:
+                dispatch_resume(<dispatch_queue_t>self._source)
+            dispatch_release(<dispatch_queue_t>self._source)
+            self._source = NULL
+
+    def start(self):
+        """Start monitoring the signal."""
+        if self._started:
+            return
+        if self._cancelled:
+            raise RuntimeError("Cannot start a cancelled signal source")
+        self._started = True
+        with nogil:
+            dispatch_resume(<dispatch_queue_t>self._source)
+
+    def cancel(self):
+        """Stop monitoring the signal."""
+        if self._cancelled:
+            return
+        self._cancelled = True
+        with nogil:
+            dispatch_source_cancel(self._source)
+
+    @property
+    def is_cancelled(self):
+        """Check if the source has been cancelled."""
+        cdef intptr_t result
+        with nogil:
+            result = dispatch_source_testcancel(self._source)
+        return result != 0
+
+    @property
+    def signal(self):
+        """Get the signal number being monitored."""
+        return self._signal
+
+    @property
+    def count(self):
+        """
+        Get the number of signals received since last handler invocation.
+
+        This is useful for coalesced signals where multiple signals may have
+        arrived before the handler ran.
+        """
+        cdef uintptr_t data
+        with nogil:
+            data = dispatch_source_get_data(self._source)
+        return data
+
+
+cdef class ReadSource:
+    """
+    Dispatch source for monitoring file descriptor readability.
+
+    Fires when the file descriptor has data available to read.
+    """
+    cdef dispatch_source_t _source
+    cdef object _handler
+    cdef bint _started
+    cdef bint _cancelled
+    cdef int _fd
+
+    def __cinit__(self):
+        self._source = NULL
+        self._handler = None
+        self._started = False
+        self._cancelled = False
+        self._fd = -1
+
+    def __init__(self, int fd, handler, Queue queue=None):
+        """
+        Create a new read source.
+
+        Args:
+            fd: The file descriptor to monitor.
+            handler: Callable to invoke when data is available to read.
+                     Receives no arguments.
+            queue: Queue to execute handler on. If None, uses default global queue.
+        """
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+
+        self._fd = fd
+        cdef dispatch_queue_t q
+        if queue is not None:
+            q = queue._queue
+        else:
+            q = NULL
+
+        # Create read source
+        with nogil:
+            self._source = dispatch_source_create(
+                _dispatch_source_type_read, <uintptr_t>fd, 0, q)
+
+        if self._source == NULL:
+            raise RuntimeError("Failed to create read source")
+
+        # Store handler and set up callbacks
+        self._handler = handler
+        Py_INCREF(handler)
+
+        cdef PyObject* ctx = <PyObject*>handler
+        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+
+    def __dealloc__(self):
+        if self._source != NULL:
+            if not self._cancelled:
+                dispatch_source_cancel(self._source)
+            if not self._started:
+                dispatch_resume(<dispatch_queue_t>self._source)
+            dispatch_release(<dispatch_queue_t>self._source)
+            self._source = NULL
+
+    def start(self):
+        """Start monitoring the file descriptor."""
+        if self._started:
+            return
+        if self._cancelled:
+            raise RuntimeError("Cannot start a cancelled read source")
+        self._started = True
+        with nogil:
+            dispatch_resume(<dispatch_queue_t>self._source)
+
+    def cancel(self):
+        """Stop monitoring the file descriptor."""
+        if self._cancelled:
+            return
+        self._cancelled = True
+        with nogil:
+            dispatch_source_cancel(self._source)
+
+    @property
+    def is_cancelled(self):
+        """Check if the source has been cancelled."""
+        cdef intptr_t result
+        with nogil:
+            result = dispatch_source_testcancel(self._source)
+        return result != 0
+
+    @property
+    def fd(self):
+        """Get the file descriptor being monitored."""
+        return self._fd
+
+    @property
+    def bytes_available(self):
+        """
+        Get an estimate of the number of bytes available to read.
+
+        This is an estimate and may not be exact.
+        """
+        cdef uintptr_t data
+        with nogil:
+            data = dispatch_source_get_data(self._source)
+        return data
+
+
+cdef class WriteSource:
+    """
+    Dispatch source for monitoring file descriptor writability.
+
+    Fires when the file descriptor can accept data for writing.
+    """
+    cdef dispatch_source_t _source
+    cdef object _handler
+    cdef bint _started
+    cdef bint _cancelled
+    cdef int _fd
+
+    def __cinit__(self):
+        self._source = NULL
+        self._handler = None
+        self._started = False
+        self._cancelled = False
+        self._fd = -1
+
+    def __init__(self, int fd, handler, Queue queue=None):
+        """
+        Create a new write source.
+
+        Args:
+            fd: The file descriptor to monitor.
+            handler: Callable to invoke when writing is possible.
+                     Receives no arguments.
+            queue: Queue to execute handler on. If None, uses default global queue.
+        """
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+
+        self._fd = fd
+        cdef dispatch_queue_t q
+        if queue is not None:
+            q = queue._queue
+        else:
+            q = NULL
+
+        # Create write source
+        with nogil:
+            self._source = dispatch_source_create(
+                _dispatch_source_type_write, <uintptr_t>fd, 0, q)
+
+        if self._source == NULL:
+            raise RuntimeError("Failed to create write source")
+
+        # Store handler and set up callbacks
+        self._handler = handler
+        Py_INCREF(handler)
+
+        cdef PyObject* ctx = <PyObject*>handler
+        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+
+    def __dealloc__(self):
+        if self._source != NULL:
+            if not self._cancelled:
+                dispatch_source_cancel(self._source)
+            if not self._started:
+                dispatch_resume(<dispatch_queue_t>self._source)
+            dispatch_release(<dispatch_queue_t>self._source)
+            self._source = NULL
+
+    def start(self):
+        """Start monitoring the file descriptor."""
+        if self._started:
+            return
+        if self._cancelled:
+            raise RuntimeError("Cannot start a cancelled write source")
+        self._started = True
+        with nogil:
+            dispatch_resume(<dispatch_queue_t>self._source)
+
+    def cancel(self):
+        """Stop monitoring the file descriptor."""
+        if self._cancelled:
+            return
+        self._cancelled = True
+        with nogil:
+            dispatch_source_cancel(self._source)
+
+    @property
+    def is_cancelled(self):
+        """Check if the source has been cancelled."""
+        cdef intptr_t result
+        with nogil:
+            result = dispatch_source_testcancel(self._source)
+        return result != 0
+
+    @property
+    def fd(self):
+        """Get the file descriptor being monitored."""
+        return self._fd
+
+    @property
+    def buffer_space(self):
+        """
+        Get an estimate of the space available in the write buffer.
+
+        This is an estimate and may not be exact.
+        """
+        cdef uintptr_t data
+        with nogil:
+            data = dispatch_source_get_data(self._source)
+        return data
+
+
+cdef class ProcessSource:
+    """
+    Dispatch source for monitoring process events.
+
+    Monitors a process for specific events like exit, fork, exec, or signal.
+    """
+    cdef dispatch_source_t _source
+    cdef object _handler
+    cdef bint _started
+    cdef bint _cancelled
+    cdef int _pid
+    cdef uintptr_t _events
+
+    def __cinit__(self):
+        self._source = NULL
+        self._handler = None
+        self._started = False
+        self._cancelled = False
+        self._pid = 0
+        self._events = 0
+
+    def __init__(self, int pid, handler, uintptr_t events=_DISPATCH_PROC_EXIT, Queue queue=None):
+        """
+        Create a new process source.
+
+        Args:
+            pid: The process ID to monitor.
+            handler: Callable to invoke when an event occurs.
+                     Receives no arguments.
+            events: Events to monitor. Combine with bitwise OR:
+                    - PROC_EXIT: Process exited
+                    - PROC_FORK: Process forked
+                    - PROC_EXEC: Process executed exec()
+                    - PROC_SIGNAL: Process received a signal
+            queue: Queue to execute handler on. If None, uses default global queue.
+        """
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+
+        self._pid = pid
+        self._events = events
+        cdef dispatch_queue_t q
+        if queue is not None:
+            q = queue._queue
+        else:
+            q = NULL
+
+        # Create process source
+        with nogil:
+            self._source = dispatch_source_create(
+                _dispatch_source_type_proc, <uintptr_t>pid, events, q)
+
+        if self._source == NULL:
+            raise RuntimeError("Failed to create process source")
+
+        # Store handler and set up callbacks
+        self._handler = handler
+        Py_INCREF(handler)
+
+        cdef PyObject* ctx = <PyObject*>handler
+        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+
+    def __dealloc__(self):
+        if self._source != NULL:
+            if not self._cancelled:
+                dispatch_source_cancel(self._source)
+            if not self._started:
+                dispatch_resume(<dispatch_queue_t>self._source)
+            dispatch_release(<dispatch_queue_t>self._source)
+            self._source = NULL
+
+    def start(self):
+        """Start monitoring the process."""
+        if self._started:
+            return
+        if self._cancelled:
+            raise RuntimeError("Cannot start a cancelled process source")
+        self._started = True
+        with nogil:
+            dispatch_resume(<dispatch_queue_t>self._source)
+
+    def cancel(self):
+        """Stop monitoring the process."""
+        if self._cancelled:
+            return
+        self._cancelled = True
+        with nogil:
+            dispatch_source_cancel(self._source)
+
+    @property
+    def is_cancelled(self):
+        """Check if the source has been cancelled."""
+        cdef intptr_t result
+        with nogil:
+            result = dispatch_source_testcancel(self._source)
+        return result != 0
+
+    @property
+    def pid(self):
+        """Get the process ID being monitored."""
+        return self._pid
+
+    @property
+    def events_pending(self):
+        """
+        Get the events that have occurred since the last handler invocation.
+
+        Returns a bitmask of PROC_* constants.
+        """
+        cdef uintptr_t data
+        with nogil:
+            data = dispatch_source_get_data(self._source)
+        return data

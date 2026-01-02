@@ -4,13 +4,16 @@ Prioritized plan for wrapping remaining Grand Central Dispatch APIs.
 
 ## Current Coverage
 
-- [x] Queues (create, global, main, label, suspend/resume)
+- [x] Queues (create, global, main, label, suspend/resume, target, QOS)
 - [x] Execution (async, sync, barrier, after, apply)
 - [x] Groups (create, async, wait, notify, enter/leave)
 - [x] Semaphores (create, wait, signal)
 - [x] Once
 - [x] Time (dispatch_time, dispatch_walltime)
 - [x] Timer (dispatch source)
+- [x] SignalSource (dispatch source for signals)
+- [x] ReadSource/WriteSource (dispatch source for file descriptors)
+- [x] ProcessSource (dispatch source for process events)
 
 ---
 
@@ -77,49 +80,49 @@ Functions wrapped:
 
 ---
 
-## Phase 2: Medium Priority
+## Phase 2: Medium Priority - COMPLETED
 
 Advanced features for specialized use cases.
 
-### 2.1 Dispatch Sources - Signals
+### 2.1 Dispatch Sources - Signals - DONE
 
 Handle Unix signals asynchronously.
 
 ```python
-sig = pygcd.SignalSource(signal.SIGINT, queue=q, handler=on_interrupt)
+sig = pygcd.SignalSource(signal.SIGINT, handler=on_interrupt, queue=q)
 sig.start()
 ```
 
-Functions to wrap:
-- [ ] `dispatch_source_create` (with `DISPATCH_SOURCE_TYPE_SIGNAL`)
-- [ ] `dispatch_source_get_data`
-- [ ] `dispatch_source_get_handle`
+Functions wrapped:
+- [x] `dispatch_source_create` (with `DISPATCH_SOURCE_TYPE_SIGNAL`)
+- [x] `dispatch_source_get_data`
+- [x] `dispatch_source_get_handle`
 
-### 2.2 Dispatch Sources - File Descriptors
+### 2.2 Dispatch Sources - File Descriptors - DONE
 
 Monitor file descriptors for read/write readiness.
 
 ```python
-reader = pygcd.ReadSource(fd, queue=q, handler=on_readable)
-writer = pygcd.WriteSource(fd, queue=q, handler=on_writable)
+reader = pygcd.ReadSource(fd, handler=on_readable, queue=q)
+writer = pygcd.WriteSource(fd, handler=on_writable, queue=q)
 ```
 
-Functions to wrap:
-- [ ] `dispatch_source_create` (with `DISPATCH_SOURCE_TYPE_READ`, `_WRITE`)
+Functions wrapped:
+- [x] `dispatch_source_create` (with `DISPATCH_SOURCE_TYPE_READ`, `_WRITE`)
 
-### 2.3 Dispatch Sources - Process Events
+### 2.3 Dispatch Sources - Process Events - DONE
 
 Monitor process lifecycle events.
 
 ```python
-proc = pygcd.ProcessSource(pid, events=pygcd.PROC_EXIT, queue=q, handler=on_exit)
+proc = pygcd.ProcessSource(pid, handler=on_exit, events=pygcd.PROC_EXIT, queue=q)
 ```
 
-Functions to wrap:
-- [ ] `dispatch_source_create` (with `DISPATCH_SOURCE_TYPE_PROC`)
-- [ ] `dispatch_source_get_mask`
+Functions wrapped:
+- [x] `dispatch_source_create` (with `DISPATCH_SOURCE_TYPE_PROC`)
+- [x] `dispatch_source_get_mask`
 
-### 2.4 Queue Target/Hierarchy
+### 2.4 Queue Target/Hierarchy - DONE
 
 Create queue hierarchies for priority management.
 
@@ -128,11 +131,10 @@ parent = pygcd.Queue("parent")
 child = pygcd.Queue("child", target=parent)
 ```
 
-Functions to wrap:
-- [ ] `dispatch_queue_create_with_target`
-- [ ] `dispatch_set_target_queue`
+Functions wrapped:
+- [x] `dispatch_set_target_queue`
 
-### 2.5 Queue QOS Attributes
+### 2.5 Queue QOS Attributes - DONE
 
 Fine-grained quality of service control.
 
@@ -140,9 +142,8 @@ Fine-grained quality of service control.
 q = pygcd.Queue("work", qos=pygcd.QOS_CLASS_UTILITY)
 ```
 
-Functions to wrap:
-- [ ] `dispatch_queue_attr_make_with_qos_class`
-- [ ] `dispatch_queue_get_qos_class`
+Functions wrapped:
+- [x] `dispatch_queue_attr_make_with_qos_class`
 
 ---
 

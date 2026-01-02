@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-01-02
+
+### Added
+
+#### Dispatch Sources
+
+- `SignalSource` - Monitor Unix signals asynchronously
+  - `start()` / `cancel()` - Control signal monitoring
+  - `signal` property - Signal number being monitored
+  - `count` property - Signals received since last handler
+  - `is_cancelled` property - Check cancellation status
+
+- `ReadSource` - Monitor file descriptors for read availability
+  - `start()` / `cancel()` - Control monitoring
+  - `fd` property - File descriptor being monitored
+  - `bytes_available` property - Estimated bytes available
+  - `is_cancelled` property - Check cancellation status
+
+- `WriteSource` - Monitor file descriptors for write availability
+  - `start()` / `cancel()` - Control monitoring
+  - `fd` property - File descriptor being monitored
+  - `buffer_space` property - Estimated buffer space
+  - `is_cancelled` property - Check cancellation status
+
+- `ProcessSource` - Monitor process lifecycle events
+  - `start()` / `cancel()` - Control monitoring
+  - `pid` property - Process ID being monitored
+  - `events_pending` property - Events that occurred
+  - `is_cancelled` property - Check cancellation status
+  - Supports `PROC_EXIT`, `PROC_FORK`, `PROC_EXEC`, `PROC_SIGNAL` events
+
+#### Queue Enhancements
+
+- `Queue` now supports Quality of Service (QOS) attributes
+  - `qos` parameter - Set QOS class at creation
+  - `relative_priority` parameter - Priority offset within QOS class
+
+- `Queue` now supports target queue hierarchy
+  - `target` parameter - Set target queue at creation
+  - `set_target_queue(queue)` method - Set target queue after creation
+
+#### Constants
+
+- Process event flags: `PROC_EXIT`, `PROC_FORK`, `PROC_EXEC`, `PROC_SIGNAL`
+
+#### Examples
+
+- `signal_source.py` - Unix signal handling with dispatch sources
+- `fd_source.py` - File descriptor I/O monitoring
+- `process_source.py` - Process lifecycle monitoring
+
+---
+
 ## [0.1.0] - 2026-01-02
 
 ### Added

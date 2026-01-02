@@ -1,5 +1,8 @@
 """Tests for pygcd - Python GCD wrapper."""
 
+import os
+import signal
+import subprocess
 import time
 import threading
 import pytest
@@ -610,3 +613,360 @@ class TestTimer:
         timer.cancel()
         with pytest.raises(RuntimeError):
             timer.start()
+
+
+class TestQueueQOS:
+    """Tests for Queue QOS and target queue features."""
+
+    def test_queue_with_qos(self):
+        """Test creating queue with QOS class."""
+        q = pygcd.Queue("test.qos", qos=pygcd.QOS_CLASS_UTILITY)
+        assert q is not None
+        assert q.label == "test.qos"
+
+    def test_queue_with_qos_and_priority(self):
+        """Test creating queue with QOS and relative priority."""
+        q = pygcd.Queue("test.qos_priority",
+                       qos=pygcd.QOS_CLASS_USER_INITIATED,
+                       relative_priority=-5)
+        results = []
+        q.run_sync(lambda: results.append(1))
+        assert results == [1]
+
+    def test_queue_concurrent_with_qos(self):
+        """Test concurrent queue with QOS."""
+        q = pygcd.Queue("test.concurrent_qos",
+                       concurrent=True,
+                       qos=pygcd.QOS_CLASS_BACKGROUND)
+        results = []
+        lock = threading.Lock()
+
+        for i in range(3):
+            q.run_async(lambda i=i: (lock.acquire(), results.append(i), lock.release()))
+
+        q.barrier_sync(lambda: None)
+        assert len(results) == 3
+
+    def test_queue_target(self):
+        """Test queue with target queue."""
+        parent = pygcd.Queue("parent")
+        child = pygcd.Queue("child", target=parent)
+        results = []
+
+        child.run_sync(lambda: results.append(1))
+        assert results == [1]
+
+    def test_queue_set_target(self):
+        """Test setting target queue after creation."""
+        parent = pygcd.Queue("parent")
+        child = pygcd.Queue("child")
+
+        child.set_target_queue(parent)
+        results = []
+
+        child.run_sync(lambda: results.append(1))
+        assert results == [1]
+
+    def test_queue_hierarchy(self):
+        """Test queue hierarchy with multiple levels."""
+        root = pygcd.Queue("root")
+        level1 = pygcd.Queue("level1", target=root)
+        level2 = pygcd.Queue("level2", target=level1)
+
+        results = []
+        level2.run_sync(lambda: results.append(1))
+        assert results == [1]
+
+
+class TestProcessEventConstants:
+    """Tests for process event constants."""
+
+    def test_proc_constants(self):
+        """Test process event constants are defined."""
+        assert pygcd.PROC_EXIT == 0x80000000
+        assert pygcd.PROC_FORK == 0x40000000
+        assert pygcd.PROC_EXEC == 0x20000000
+        assert pygcd.PROC_SIGNAL == 0x08000000
+
+
+class TestSignalSource:
+    """Tests for SignalSource class."""
+
+    def test_create_signal_source(self):
+        """Test creating a signal source."""
+        # Use SIGUSR1 which is safe to handle
+        old_handler = signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+        try:
+            source = pygcd.SignalSource(signal.SIGUSR1, lambda: None)
+            assert source is not None
+            assert source.signal == signal.SIGUSR1
+            assert not source.is_cancelled
+            source.cancel()
+        finally:
+            signal.signal(signal.SIGUSR1, old_handler)
+
+    def test_signal_source_fires(self):
+        """Test that signal source fires on signal."""
+        results = []
+        lock = threading.Lock()
+
+        def handler():
+            with lock:
+                results.append(1)
+
+        old_handler = signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+        try:
+            source = pygcd.SignalSource(signal.SIGUSR1, handler)
+            source.start()
+
+            # Send signal to self
+            os.kill(os.getpid(), signal.SIGUSR1)
+            time.sleep(0.1)
+
+            source.cancel()
+            assert len(results) >= 1
+        finally:
+            signal.signal(signal.SIGUSR1, old_handler)
+
+    def test_signal_source_cancel(self):
+        """Test cancelling a signal source."""
+        old_handler = signal.signal(signal.SIGUSR2, signal.SIG_IGN)
+        try:
+            source = pygcd.SignalSource(signal.SIGUSR2, lambda: None)
+            source.start()
+            source.cancel()
+            assert source.is_cancelled
+        finally:
+            signal.signal(signal.SIGUSR2, old_handler)
+
+    def test_signal_source_with_queue(self):
+        """Test signal source with explicit queue."""
+        q = pygcd.Queue("signal.queue")
+        results = []
+
+        old_handler = signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+        try:
+            source = pygcd.SignalSource(signal.SIGUSR1, lambda: results.append(1), queue=q)
+            source.start()
+
+            os.kill(os.getpid(), signal.SIGUSR1)
+            time.sleep(0.1)
+
+            source.cancel()
+            assert len(results) >= 1
+        finally:
+            signal.signal(signal.SIGUSR1, old_handler)
+
+    def test_signal_source_raises_on_non_callable(self):
+        """Test signal source raises TypeError for non-callable."""
+        with pytest.raises(TypeError):
+            pygcd.SignalSource(signal.SIGUSR1, "not callable")
+
+
+class TestReadSource:
+    """Tests for ReadSource class."""
+
+    def test_create_read_source(self):
+        """Test creating a read source."""
+        r, w = os.pipe()
+        try:
+            source = pygcd.ReadSource(r, lambda: None)
+            assert source is not None
+            assert source.fd == r
+            assert not source.is_cancelled
+            source.cancel()
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_read_source_fires(self):
+        """Test that read source fires when data is available."""
+        r, w = os.pipe()
+        results = []
+        lock = threading.Lock()
+
+        def handler():
+            with lock:
+                results.append(1)
+
+        try:
+            source = pygcd.ReadSource(r, handler)
+            source.start()
+
+            # Write data to trigger the source
+            os.write(w, b"test")
+            time.sleep(0.1)
+
+            source.cancel()
+            assert len(results) >= 1
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_read_source_cancel(self):
+        """Test cancelling a read source."""
+        r, w = os.pipe()
+        try:
+            source = pygcd.ReadSource(r, lambda: None)
+            source.start()
+            source.cancel()
+            assert source.is_cancelled
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_read_source_with_queue(self):
+        """Test read source with explicit queue."""
+        r, w = os.pipe()
+        q = pygcd.Queue("read.queue")
+        results = []
+
+        try:
+            source = pygcd.ReadSource(r, lambda: results.append(1), queue=q)
+            source.start()
+
+            os.write(w, b"test")
+            time.sleep(0.1)
+
+            source.cancel()
+            assert len(results) >= 1
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_read_source_raises_on_non_callable(self):
+        """Test read source raises TypeError for non-callable."""
+        r, w = os.pipe()
+        try:
+            with pytest.raises(TypeError):
+                pygcd.ReadSource(r, "not callable")
+        finally:
+            os.close(r)
+            os.close(w)
+
+
+class TestWriteSource:
+    """Tests for WriteSource class."""
+
+    def test_create_write_source(self):
+        """Test creating a write source."""
+        r, w = os.pipe()
+        try:
+            source = pygcd.WriteSource(w, lambda: None)
+            assert source is not None
+            assert source.fd == w
+            assert not source.is_cancelled
+            source.cancel()
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_write_source_fires(self):
+        """Test that write source fires when writing is possible."""
+        r, w = os.pipe()
+        results = []
+        lock = threading.Lock()
+
+        def handler():
+            with lock:
+                results.append(1)
+
+        try:
+            source = pygcd.WriteSource(w, handler)
+            source.start()
+
+            # Pipe should be immediately writable
+            time.sleep(0.1)
+
+            source.cancel()
+            # Should have fired at least once since pipe is writable
+            assert len(results) >= 1
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_write_source_cancel(self):
+        """Test cancelling a write source."""
+        r, w = os.pipe()
+        try:
+            source = pygcd.WriteSource(w, lambda: None)
+            source.start()
+            source.cancel()
+            assert source.is_cancelled
+        finally:
+            os.close(r)
+            os.close(w)
+
+    def test_write_source_raises_on_non_callable(self):
+        """Test write source raises TypeError for non-callable."""
+        r, w = os.pipe()
+        try:
+            with pytest.raises(TypeError):
+                pygcd.WriteSource(w, "not callable")
+        finally:
+            os.close(r)
+            os.close(w)
+
+
+class TestProcessSource:
+    """Tests for ProcessSource class."""
+
+    def test_create_process_source(self):
+        """Test creating a process source."""
+        # Monitor our own process
+        source = pygcd.ProcessSource(os.getpid(), lambda: None)
+        assert source is not None
+        assert source.pid == os.getpid()
+        assert not source.is_cancelled
+        source.cancel()
+
+    def test_process_source_with_events(self):
+        """Test creating process source with specific events."""
+        source = pygcd.ProcessSource(
+            os.getpid(),
+            lambda: None,
+            events=pygcd.PROC_EXIT | pygcd.PROC_FORK
+        )
+        assert source is not None
+        source.cancel()
+
+    def test_process_source_detects_exit(self):
+        """Test that process source detects child exit."""
+        results = []
+        lock = threading.Lock()
+
+        def handler():
+            with lock:
+                results.append("exited")
+
+        # Start a subprocess that exits quickly
+        proc = subprocess.Popen(["sleep", "0.1"])
+
+        source = pygcd.ProcessSource(proc.pid, handler, events=pygcd.PROC_EXIT)
+        source.start()
+
+        # Wait for process to exit
+        proc.wait()
+        time.sleep(0.2)
+
+        source.cancel()
+        assert "exited" in results
+
+    def test_process_source_cancel(self):
+        """Test cancelling a process source."""
+        source = pygcd.ProcessSource(os.getpid(), lambda: None)
+        source.start()
+        source.cancel()
+        assert source.is_cancelled
+
+    def test_process_source_with_queue(self):
+        """Test process source with explicit queue."""
+        q = pygcd.Queue("proc.queue")
+        source = pygcd.ProcessSource(os.getpid(), lambda: None, queue=q)
+        assert source is not None
+        source.cancel()
+
+    def test_process_source_raises_on_non_callable(self):
+        """Test process source raises TypeError for non-callable."""
+        with pytest.raises(TypeError):
+            pygcd.ProcessSource(os.getpid(), "not callable")

@@ -19,6 +19,10 @@ from pygcd._core import (
     Semaphore,
     Once,
     Timer,
+    SignalSource,
+    ReadSource,
+    WriteSource,
+    ProcessSource,
     # Functions
     apply,
     time_from_now,
@@ -43,6 +47,11 @@ from pygcd._core import (
     QOS_CLASS_UTILITY,
     QOS_CLASS_BACKGROUND,
     QOS_CLASS_UNSPECIFIED,
+    # Process event flags
+    PROC_EXIT,
+    PROC_FORK,
+    PROC_EXEC,
+    PROC_SIGNAL,
 )
 
 __all__ = [
@@ -52,6 +61,10 @@ __all__ = [
     "Semaphore",
     "Once",
     "Timer",
+    "SignalSource",
+    "ReadSource",
+    "WriteSource",
+    "ProcessSource",
     # Functions
     "apply",
     "time_from_now",
@@ -76,5 +89,10 @@ __all__ = [
     "QOS_CLASS_UTILITY",
     "QOS_CLASS_BACKGROUND",
     "QOS_CLASS_UNSPECIFIED",
+    # Process event flags
+    "PROC_EXIT",
+    "PROC_FORK",
+    "PROC_EXEC",
+    "PROC_SIGNAL",
 ]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

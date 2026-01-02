@@ -226,6 +226,81 @@ one_shot = pygcd.Timer(1.0, lambda: print("Done!"), repeating=False)
 one_shot.start()
 ```
 
+### Signal Handling
+
+Handle Unix signals asynchronously on a dispatch queue.
+
+```python
+import os
+import signal
+import pygcd
+
+def on_signal():
+    print("Received SIGUSR1!")
+
+# Disable default handling
+signal.signal(signal.SIGUSR1, signal.SIG_IGN)
+
+# Create signal source
+source = pygcd.SignalSource(signal.SIGUSR1, on_signal)
+source.start()
+
+# Send signal to self
+os.kill(os.getpid(), signal.SIGUSR1)
+
+# ... later
+source.cancel()
+```
+
+### File Descriptor Monitoring
+
+Monitor file descriptors for read/write availability.
+
+```python
+import os
+import pygcd
+
+r, w = os.pipe()
+
+def on_readable():
+    data = os.read(r, 1024)
+    print(f"Received: {data}")
+
+# Monitor for readable data
+reader = pygcd.ReadSource(r, on_readable)
+reader.start()
+
+# Write triggers the handler
+os.write(w, b"Hello!")
+
+# ... later
+reader.cancel()
+```
+
+### Process Monitoring
+
+Monitor processes for lifecycle events.
+
+```python
+import subprocess
+import pygcd
+
+def on_exit():
+    print("Child process exited!")
+
+# Launch a subprocess
+proc = subprocess.Popen(["sleep", "1"])
+
+# Monitor for exit
+source = pygcd.ProcessSource(proc.pid, on_exit, events=pygcd.PROC_EXIT)
+source.start()
+
+# Wait for exit notification
+proc.wait()
+
+source.cancel()
+```
+
 ### Suspend and Resume
 
 Control queue execution.
@@ -272,7 +347,7 @@ t = pygcd.walltime(timestamp=future)
 
 | Method | Description |
 |--------|-------------|
-| `Queue(label=None, concurrent=False)` | Create a queue |
+| `Queue(label=None, concurrent=False, qos=0, target=None)` | Create a queue |
 | `Queue.global_queue(priority=0)` | Get a global queue |
 | `Queue.main_queue()` | Get the main queue |
 | `run_async(func)` | Submit for async execution |
@@ -282,7 +357,15 @@ t = pygcd.walltime(timestamp=future)
 | `after(delay_seconds, func)` | Delayed execution |
 | `suspend()` | Suspend queue execution |
 | `resume()` | Resume queue execution |
+| `set_target_queue(queue)` | Set target queue for hierarchy |
 | `label` | Queue's label (property) |
+
+Queue constructor parameters:
+- `label`: Optional string label for debugging
+- `concurrent`: If True, create a concurrent queue
+- `qos`: Quality of Service class (QOS_CLASS_* constants)
+- `relative_priority`: Priority offset within QOS class (-15 to 0)
+- `target`: Target queue for queue hierarchy
 
 ### Group
 
@@ -328,6 +411,50 @@ Timer constructor parameters:
 - `leeway`: Power optimization leeway (default: 0)
 - `repeating`: True for repeating, False for one-shot
 
+### SignalSource
+
+| Method | Description |
+|--------|-------------|
+| `SignalSource(signum, handler, queue=None)` | Create a signal source |
+| `start()` | Start monitoring |
+| `cancel()` | Stop monitoring |
+| `signal` | Signal number (property) |
+| `count` | Signals received since last handler (property) |
+| `is_cancelled` | Check if cancelled (property) |
+
+### ReadSource
+
+| Method | Description |
+|--------|-------------|
+| `ReadSource(fd, handler, queue=None)` | Create a read source |
+| `start()` | Start monitoring |
+| `cancel()` | Stop monitoring |
+| `fd` | File descriptor (property) |
+| `bytes_available` | Estimated bytes available (property) |
+| `is_cancelled` | Check if cancelled (property) |
+
+### WriteSource
+
+| Method | Description |
+|--------|-------------|
+| `WriteSource(fd, handler, queue=None)` | Create a write source |
+| `start()` | Start monitoring |
+| `cancel()` | Stop monitoring |
+| `fd` | File descriptor (property) |
+| `buffer_space` | Estimated buffer space (property) |
+| `is_cancelled` | Check if cancelled (property) |
+
+### ProcessSource
+
+| Method | Description |
+|--------|-------------|
+| `ProcessSource(pid, handler, events=PROC_EXIT, queue=None)` | Create a process source |
+| `start()` | Start monitoring |
+| `cancel()` | Stop monitoring |
+| `pid` | Process ID (property) |
+| `events_pending` | Events that occurred (property) |
+| `is_cancelled` | Check if cancelled (property) |
+
 ### Functions
 
 | Function | Description |
@@ -352,6 +479,12 @@ Timer constructor parameters:
 - `QOS_CLASS_DEFAULT`, `QOS_CLASS_UTILITY`
 - `QOS_CLASS_BACKGROUND`, `QOS_CLASS_UNSPECIFIED`
 
+**Process Events:**
+- `PROC_EXIT` - Process exited
+- `PROC_FORK` - Process forked
+- `PROC_EXEC` - Process executed exec()
+- `PROC_SIGNAL` - Process received a signal
+
 ## Examples
 
 See the `examples/` directory for complete examples:
@@ -365,6 +498,9 @@ See the `examples/` directory for complete examples:
 - `producer_consumer.py` - Semaphore coordination
 - `delayed_execution.py` - Scheduled tasks
 - `timer.py` - Repeating and one-shot timers
+- `signal_source.py` - Unix signal handling
+- `fd_source.py` - File descriptor I/O monitoring
+- `process_source.py` - Process lifecycle monitoring
 
 ## Notes
 
