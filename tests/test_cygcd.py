@@ -1452,28 +1452,36 @@ class TestIOChannel:
             fd = os.open(path, os.O_RDONLY)
             try:
                 channel = cygcd.IOChannel(fd, cygcd.IO_STREAM)
-                read_done = [False]
+                read_data = []
                 barrier_done = [False]
-                sem = cygcd.Semaphore(0)
+                read_sem = cygcd.Semaphore(0)
+                barrier_sem = cygcd.Semaphore(0)
 
                 def on_read(done, data, error):
+                    if data:
+                        read_data.append(bytes(data))
                     if done:
-                        read_done[0] = True
+                        read_sem.signal()
 
                 def on_barrier():
                     barrier_done[0] = True
-                    sem.signal()
+                    barrier_sem.signal()
 
                 channel.read(1024, on_read)
                 channel.barrier(on_barrier)
 
-                completed = sem.wait(5.0)
-                assert completed, "Barrier timed out"
+                # Wait for both to complete (barrier guarantees I/O done,
+                # but on concurrent queue handlers may execute in any order)
+                read_completed = read_sem.wait(5.0)
+                barrier_completed = barrier_sem.wait(5.0)
+
+                assert read_completed, "Read timed out"
+                assert barrier_completed, "Barrier timed out"
 
                 channel.close()
 
-                # Barrier should have executed after read
-                assert read_done[0]
+                # Verify data was read and barrier executed
+                assert b"".join(read_data) == test_data
                 assert barrier_done[0]
             finally:
                 os.close(fd)

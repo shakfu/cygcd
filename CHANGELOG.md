@@ -29,6 +29,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AUTORELEASE_FREQUENCY_WORK_ITEM` - Drain after each work item
 - `AUTORELEASE_FREQUENCY_NEVER` - Never drain automatically
 
+#### Documentation
+
+- `docs/usecase_networking.md` - Guide for concurrent networking applications
+  - Parallel HTTP requests with bounded concurrency
+  - Connection pooling patterns
+  - Rate-limited API clients
+  - Retry with exponential backoff
+  - Non-blocking socket I/O with ReadSource/WriteSource
+  - Health check monitoring with Timer
+  - Fan-out/fan-in and producer-consumer patterns
+
+### Fixed
+
+#### Technical
+
+- Consistent GIL release during dispatch source initialization (Timer, SignalSource, ReadSource, WriteSource, ProcessSource)
+- GIL release during `Data.concat` retain operations
+
 ## [0.1.2]
 
 ### Added

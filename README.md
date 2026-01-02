@@ -611,6 +611,10 @@ inactive_wl.run_sync(lambda: print("Running!"))
 | `resume()` | Resume queue execution |
 | `activate()` | Activate an inactive queue |
 | `set_target_queue(queue)` | Set target queue for hierarchy |
+| `set_context(value, finalizer=None)` | Attach context data to queue |
+| `get_context()` | Retrieve context data |
+| `set_specific(key, value)` | Set queue-specific data |
+| `get_specific(key)` | Get queue-specific data |
 | `label` | Queue's label (property) |
 | `is_inactive` | Check if queue is inactive (property) |
 
@@ -717,6 +721,8 @@ Timer constructor parameters:
 | `Data(bytes=None)` | Create from bytes (or empty) |
 | `concat(other)` | Concatenate with another Data |
 | `subrange(offset, length)` | Extract a subrange |
+| `copy_region(location)` | Get contiguous region at location |
+| `apply(func)` | Iterate over contiguous regions |
 | `size` | Size in bytes (property) |
 | `__len__()` | Size in bytes |
 | `__bytes__()` | Convert to bytes |
@@ -729,9 +735,11 @@ Timer constructor parameters:
 | `run_async(func)` | Submit for async execution |
 | `run_sync(func)` | Submit and wait for completion |
 | `activate()` | Activate an inactive workloop |
+| `set_autorelease_frequency(freq)` | Set autorelease pool drain frequency |
 | `is_inactive` | Check if inactive (property) |
 
 Note: Work cannot be submitted to inactive workloops (raises RuntimeError).
+Note: `set_autorelease_frequency` must be called before `activate()`.
 
 ### IOChannel
 
@@ -768,6 +776,7 @@ IOChannel callbacks:
 | `walltime(timestamp=0, delta_seconds=0)` | Create dispatch time (wall clock) |
 | `read_async(fd, length, callback, queue=None)` | Async file read |
 | `write_async(fd, data, callback, queue=None)` | Async file write |
+| `get_specific(key)` | Get queue-specific data from current queue |
 
 Async I/O callbacks receive `(data, error)` where `error` is 0 on success.
 
@@ -798,6 +807,11 @@ Async I/O callbacks receive `(data, error)` where `error` is 0 on success.
 - `IO_RANDOM` - Random access I/O (with offsets)
 - `IO_STOP` - Close flag to cancel pending operations
 
+**Autorelease Frequency (Workloop):**
+- `AUTORELEASE_FREQUENCY_INHERIT` - Inherit from target queue
+- `AUTORELEASE_FREQUENCY_WORK_ITEM` - Drain after each work item
+- `AUTORELEASE_FREQUENCY_NEVER` - Never drain automatically
+
 ## Examples
 
 See the `examples/` directory for complete examples:
@@ -819,6 +833,14 @@ See the `examples/` directory for complete examples:
 - `async_io.py` - Asynchronous file read/write
 - `workloop.py` - Priority-inversion-avoiding workloops
 - `io_channel.py` - High-performance I/O with chunking and flow control
+
+## Use Case Guides
+
+See `docs/` for detailed guides on specific use cases:
+
+- `usecase_audio.md` - Audio and MIDI applications (low-latency callbacks, sequencing)
+- `usecase_image_video.md` - Image and video processing (parallel batch processing, pipelines)
+- `usecase_networking.md` - Networking applications (HTTP clients, connection pools, rate limiting)
 
 ## Notes
 

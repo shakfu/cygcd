@@ -1353,9 +1353,10 @@ cdef class Timer:
         Py_INCREF(handler)
 
         cdef PyObject* ctx = <PyObject*>handler
-        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
-        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
-        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+        with nogil:
+            dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+            dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+            dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
 
     def __dealloc__(self):
         if self._source != NULL:
@@ -1487,9 +1488,10 @@ cdef class SignalSource:
         Py_INCREF(handler)
 
         cdef PyObject* ctx = <PyObject*>handler
-        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
-        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
-        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+        with nogil:
+            dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+            dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+            dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
 
     def __dealloc__(self):
         if self._source != NULL:
@@ -1597,9 +1599,10 @@ cdef class ReadSource:
         Py_INCREF(handler)
 
         cdef PyObject* ctx = <PyObject*>handler
-        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
-        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
-        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+        with nogil:
+            dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+            dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+            dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
 
     def __dealloc__(self):
         if self._source != NULL:
@@ -1706,9 +1709,10 @@ cdef class WriteSource:
         Py_INCREF(handler)
 
         cdef PyObject* ctx = <PyObject*>handler
-        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
-        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
-        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+        with nogil:
+            dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+            dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+            dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
 
     def __dealloc__(self):
         if self._source != NULL:
@@ -1823,9 +1827,10 @@ cdef class ProcessSource:
         Py_INCREF(handler)
 
         cdef PyObject* ctx = <PyObject*>handler
-        dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
-        dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
-        dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
+        with nogil:
+            dispatch_set_context(<dispatch_source_t>self._source, <void*>ctx)
+            dispatch_source_set_event_handler_f(self._source, _python_timer_callback)
+            dispatch_source_set_cancel_handler_f(self._source, _python_timer_cancel_callback)
 
     def __dealloc__(self):
         if self._source != NULL:
@@ -1972,11 +1977,13 @@ cdef class Data:
             result._data = NULL
             result._owned = False
         elif self._data == NULL:
-            dispatch_retain(<dispatch_queue_t>other._data)
+            with nogil:
+                dispatch_retain(<dispatch_queue_t>other._data)
             result._data = other._data
             result._owned = True
         elif other._data == NULL:
-            dispatch_retain(<dispatch_queue_t>self._data)
+            with nogil:
+                dispatch_retain(<dispatch_queue_t>self._data)
             result._data = self._data
             result._owned = True
         else:

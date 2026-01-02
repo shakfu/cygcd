@@ -123,4 +123,4 @@ __all__ = [
     "AUTORELEASE_FREQUENCY_WORK_ITEM",
     "AUTORELEASE_FREQUENCY_NEVER",
 ]
-__version__ = "0.2.0"
+__version__ = "0.1.3"
