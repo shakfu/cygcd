@@ -32,6 +32,7 @@ from cygcd._core import (
     walltime,
     read_async,
     write_async,
+    get_specific,
     # Time constants
     DISPATCH_TIME_NOW,
     DISPATCH_TIME_FOREVER,
@@ -61,6 +62,10 @@ from cygcd._core import (
     IO_STREAM,
     IO_RANDOM,
     IO_STOP,
+    # Autorelease frequency constants
+    AUTORELEASE_FREQUENCY_INHERIT,
+    AUTORELEASE_FREQUENCY_WORK_ITEM,
+    AUTORELEASE_FREQUENCY_NEVER,
 )
 
 __all__ = [
@@ -83,6 +88,7 @@ __all__ = [
     "walltime",
     "read_async",
     "write_async",
+    "get_specific",
     # Time constants
     "DISPATCH_TIME_NOW",
     "DISPATCH_TIME_FOREVER",
@@ -112,5 +118,9 @@ __all__ = [
     "IO_STREAM",
     "IO_RANDOM",
     "IO_STOP",
+    # Autorelease frequency constants
+    "AUTORELEASE_FREQUENCY_INHERIT",
+    "AUTORELEASE_FREQUENCY_WORK_ITEM",
+    "AUTORELEASE_FREQUENCY_NEVER",
 ]
 __version__ = "0.2.0"

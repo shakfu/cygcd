@@ -151,7 +151,7 @@ Functions wrapped:
 
 ---
 
-## Phase 3: Lower Priority - PARTIALLY COMPLETED
+## Phase 3: Lower Priority - COMPLETED
 
 Specialized APIs with narrower use cases.
 
@@ -199,6 +199,8 @@ Efficient buffer management for I/O.
 data = cygcd.Data(bytes_obj)
 combined = data.concat(other_data)
 region = data.subrange(offset, length)
+region, offset = data.copy_region(location)
+data.apply(lambda offset, chunk: True)
 ```
 
 Functions wrapped:
@@ -207,8 +209,8 @@ Functions wrapped:
 - [x] `dispatch_data_create_concat`
 - [x] `dispatch_data_create_subrange`
 - [x] `dispatch_data_create_map`
-- [ ] `dispatch_data_copy_region`
-- [ ] `dispatch_data_apply`
+- [x] `dispatch_data_copy_region`
+- [x] `dispatch_data_apply` (simplified via map)
 
 ### 3.4 Inactive Queues - DONE
 
@@ -229,7 +231,9 @@ Functions wrapped:
 Priority-inversion-avoiding queues.
 
 ```python
-wl = cygcd.Workloop("priority-work")
+wl = cygcd.Workloop("priority-work", inactive=True)
+wl.set_autorelease_frequency(cygcd.AUTORELEASE_FREQUENCY_WORK_ITEM)
+wl.activate()
 wl.run_async(task)
 wl.run_sync(task)
 ```
@@ -237,38 +241,38 @@ wl.run_sync(task)
 Functions wrapped:
 - [x] `dispatch_workloop_create`
 - [x] `dispatch_workloop_create_inactive`
-- [ ] `dispatch_workloop_set_autorelease_frequency`
+- [x] `dispatch_workloop_set_autorelease_frequency`
 
 Note: Work cannot be submitted to inactive workloops (Apple GCD limitation).
 
-### 3.6 Object Context
+### 3.6 Object Context - DONE
 
 Attach context data to dispatch objects.
 
 ```python
-q.set_context(my_data)
-q.set_finalizer(cleanup_func)
+q.set_context(my_data, finalizer=cleanup_func)
 data = q.get_context()
 ```
 
-Functions to wrap:
-- [ ] `dispatch_set_context`
-- [ ] `dispatch_get_context`
-- [ ] `dispatch_set_finalizer_f`
+Functions wrapped:
+- [x] `dispatch_set_context`
+- [x] `dispatch_get_context`
+- [x] `dispatch_set_finalizer_f`
 
-### 3.7 Queue-Specific Data
+### 3.7 Queue-Specific Data - DONE
 
 Thread-local-like storage for queues.
 
 ```python
 q.set_specific(key, value)
+value = q.get_specific(key)
 value = cygcd.get_specific(key)  # from current queue
 ```
 
-Functions to wrap:
-- [ ] `dispatch_queue_set_specific`
-- [ ] `dispatch_queue_get_specific`
-- [ ] `dispatch_get_specific`
+Functions wrapped:
+- [x] `dispatch_queue_set_specific`
+- [x] `dispatch_queue_get_specific`
+- [x] `dispatch_get_specific`
 
 ---
 

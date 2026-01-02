@@ -1592,3 +1592,192 @@ class TestIOChannel:
                 os.close(fd)
         finally:
             os.unlink(path)
+
+
+class TestQueueContext:
+    """Tests for Queue context management."""
+
+    def test_set_get_context(self):
+        """Test setting and getting context data."""
+        q = cygcd.Queue("context.test")
+        data = {"key": "value", "count": 42}
+        q.set_context(data)
+        assert q.get_context() is data
+        assert q.get_context()["key"] == "value"
+
+    def test_context_none_by_default(self):
+        """Test that context is None by default."""
+        q = cygcd.Queue("context.default")
+        assert q.get_context() is None
+
+    def test_context_with_finalizer(self):
+        """Test that finalizer is called when context is replaced."""
+        q = cygcd.Queue("context.finalizer")
+        finalized = [False]
+
+        def finalizer():
+            finalized[0] = True
+
+        q.set_context("first", finalizer=finalizer)
+        assert q.get_context() == "first"
+        assert not finalized[0]
+
+        # Replace context, should call finalizer
+        q.set_context("second")
+        assert finalized[0]
+        assert q.get_context() == "second"
+
+    def test_context_finalizer_type_error(self):
+        """Test that non-callable finalizer raises TypeError."""
+        q = cygcd.Queue("context.error")
+        with pytest.raises(TypeError):
+            q.set_context("data", finalizer="not callable")
+
+
+class TestQueueSpecificData:
+    """Tests for queue-specific data."""
+
+    def test_set_get_specific(self):
+        """Test setting and getting queue-specific data."""
+        q = cygcd.Queue("specific.test")
+        key = "my_key"
+        value = {"data": 123}
+
+        q.set_specific(key, value)
+        assert q.get_specific(key) is value
+
+    def test_get_specific_missing_key(self):
+        """Test get_specific returns None for missing key."""
+        q = cygcd.Queue("specific.missing")
+        assert q.get_specific("nonexistent") is None
+
+    def test_set_specific_none_removes(self):
+        """Test setting None removes the specific data."""
+        q = cygcd.Queue("specific.remove")
+        key = "removable"
+
+        q.set_specific(key, "value")
+        assert q.get_specific(key) == "value"
+
+        q.set_specific(key, None)
+        assert q.get_specific(key) is None
+
+    def test_get_specific_from_queue_code(self):
+        """Test get_specific works from code running on the queue."""
+        q = cygcd.Queue("specific.running")
+        key = "running_key"
+        value = "running_value"
+        result = [None]
+
+        q.set_specific(key, value)
+
+        def check_specific():
+            result[0] = cygcd.get_specific(key)
+
+        q.run_sync(check_specific)
+        assert result[0] == value
+
+
+class TestDataExtras:
+    """Tests for Data copy_region and apply methods."""
+
+    def test_copy_region_basic(self):
+        """Test copy_region returns correct region."""
+        data = cygcd.Data(b"Hello World")
+        region, offset = data.copy_region(0)
+        # For contiguous data, region should contain all data
+        assert bytes(region) == b"Hello World"
+        assert offset == 0
+
+    def test_copy_region_middle(self):
+        """Test copy_region with middle location."""
+        data = cygcd.Data(b"Hello World")
+        region, offset = data.copy_region(5)
+        # Region contains the location
+        assert 5 - offset < len(region)
+
+    def test_copy_region_out_of_bounds(self):
+        """Test copy_region returns empty region for out of bounds location."""
+        data = cygcd.Data(b"Short")
+        # GCD returns an empty region for out of bounds locations
+        region, offset = data.copy_region(100)
+        assert len(region) == 0
+        assert offset >= len(data)  # offset is at or beyond data end
+
+    def test_copy_region_empty_data(self):
+        """Test copy_region raises for empty data."""
+        data = cygcd.Data()
+        with pytest.raises(ValueError):
+            data.copy_region(0)
+
+    def test_apply_basic(self):
+        """Test apply iterates over data."""
+        data = cygcd.Data(b"Test data")
+        regions = []
+
+        def collector(offset, chunk):
+            regions.append((offset, chunk))
+            return True
+
+        result = data.apply(collector)
+        assert result is True
+        assert len(regions) == 1
+        assert regions[0] == (0, b"Test data")
+
+    def test_apply_stop_iteration(self):
+        """Test apply stops when function returns False."""
+        data = cygcd.Data(b"Test data")
+
+        def stopper(offset, chunk):
+            return False
+
+        result = data.apply(stopper)
+        assert result is False
+
+    def test_apply_empty_data(self):
+        """Test apply on empty data returns True without calling function."""
+        data = cygcd.Data()
+        called = [False]
+
+        def never_called(offset, chunk):
+            called[0] = True
+            return True
+
+        result = data.apply(never_called)
+        assert result is True
+        assert not called[0]
+
+
+class TestWorkloopAutorelease:
+    """Tests for Workloop autorelease frequency."""
+
+    def test_autorelease_frequency_constants(self):
+        """Test autorelease frequency constants exist."""
+        assert cygcd.AUTORELEASE_FREQUENCY_INHERIT == 0
+        assert cygcd.AUTORELEASE_FREQUENCY_WORK_ITEM == 1
+        assert cygcd.AUTORELEASE_FREQUENCY_NEVER == 2
+
+    def test_set_autorelease_frequency_on_inactive(self):
+        """Test set_autorelease_frequency on inactive workloop."""
+        wl = cygcd.Workloop("autorelease.test", inactive=True)
+        # Should not raise
+        wl.set_autorelease_frequency(cygcd.AUTORELEASE_FREQUENCY_WORK_ITEM)
+        wl.activate()
+
+        # Verify workloop works after setting frequency
+        result = [None]
+        sem = cygcd.Semaphore(0)
+
+        def work():
+            result[0] = "done"
+            sem.signal()
+
+        wl.run_async(work)
+        sem.wait(1.0)
+        assert result[0] == "done"
+
+    def test_set_autorelease_frequency_on_active_raises(self):
+        """Test set_autorelease_frequency on active workloop raises."""
+        wl = cygcd.Workloop("autorelease.active")
+        with pytest.raises(RuntimeError):
+            wl.set_autorelease_frequency(cygcd.AUTORELEASE_FREQUENCY_NEVER)

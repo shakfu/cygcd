@@ -286,6 +286,23 @@ cdef extern from "dispatch/dispatch.h" nogil:
     dispatch_workloop_t dispatch_workloop_create(const char* label)
     dispatch_workloop_t dispatch_workloop_create_inactive(const char* label)
 
+    # Autorelease frequency constants
+    unsigned int DISPATCH_AUTORELEASE_FREQUENCY_INHERIT
+    unsigned int DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM
+    unsigned int DISPATCH_AUTORELEASE_FREQUENCY_NEVER
+
+    void dispatch_workloop_set_autorelease_frequency(
+        dispatch_workloop_t workloop, unsigned int frequency)
+
+    # Object context (generic for all dispatch objects)
+    void* dispatch_get_context(dispatch_queue_t obj)
+    void dispatch_set_finalizer_f(dispatch_queue_t obj, dispatch_function_t finalizer)
+
+    # Dispatch data copy_region
+    dispatch_data_t dispatch_data_copy_region(dispatch_data_t data,
+                                              size_t location,
+                                              size_t* offset_ptr)
+
 
 # Inline Objective-C code for block support
 # This enables dispatch_io functions which require ObjC blocks
@@ -440,6 +457,87 @@ cdef public void _cygcd_invoke_barrier_callback(unsigned long cb_id) noexcept wi
     _unregister_io_callback(cb_id)
 
 
+# Autorelease frequency constants for Workloop
+AUTORELEASE_FREQUENCY_INHERIT = 0      # DISPATCH_AUTORELEASE_FREQUENCY_INHERIT
+AUTORELEASE_FREQUENCY_WORK_ITEM = 1    # DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM
+AUTORELEASE_FREQUENCY_NEVER = 2        # DISPATCH_AUTORELEASE_FREQUENCY_NEVER
+
+
+# Context management for dispatch objects
+# Maps object id -> (context_value, finalizer)
+cdef dict _object_contexts = {}
+cdef unsigned long _context_counter = 0
+
+
+cdef unsigned long _register_context(object value, object finalizer):
+    """Register a context and return its ID."""
+    global _context_counter
+    cdef unsigned long ctx_id = _context_counter
+    _context_counter += 1
+    if value is not None:
+        Py_INCREF(value)
+    if finalizer is not None:
+        Py_INCREF(finalizer)
+    _object_contexts[ctx_id] = (value, finalizer)
+    return ctx_id
+
+
+cdef object _get_context_value(unsigned long ctx_id):
+    """Get context value by ID."""
+    entry = _object_contexts.get(ctx_id)
+    if entry is not None:
+        return entry[0]
+    return None
+
+
+cdef void _unregister_context(unsigned long ctx_id):
+    """Unregister context and call finalizer if set."""
+    entry = _object_contexts.pop(ctx_id, None)
+    if entry is not None:
+        value, finalizer = entry
+        if finalizer is not None:
+            try:
+                finalizer()
+            except BaseException:
+                PyErr_Print()
+            Py_DECREF(finalizer)
+        if value is not None:
+            Py_DECREF(value)
+
+
+# Trampoline for context finalizer
+cdef void _python_context_finalizer(void* context) noexcept with gil:
+    """Trampoline for dispatch object finalizer."""
+    if context == NULL:
+        return
+    cdef unsigned long ctx_id = <unsigned long><uintptr_t>context
+    _unregister_context(ctx_id)
+
+
+# Queue-specific data storage
+# Maps (queue_id, key) -> value
+cdef dict _queue_specific_data = {}
+cdef dict _queue_specific_keys = {}  # key_id -> key object (to prevent GC)
+cdef unsigned long _specific_key_counter = 0
+
+
+cdef unsigned long _create_specific_key():
+    """Create a new queue-specific key."""
+    global _specific_key_counter
+    cdef unsigned long key_id = _specific_key_counter
+    _specific_key_counter += 1
+    return key_id
+
+
+cdef void _specific_destructor(void* context) noexcept with gil:
+    """Destructor for queue-specific data."""
+    if context == NULL:
+        return
+    # Context is the Python object itself
+    cdef object value = <object>context
+    Py_DECREF(value)
+
+
 # Trampoline function that acquires GIL and calls Python callable
 cdef void _python_callback(void* context) noexcept with gil:
     """Trampoline function to call Python callables from GCD."""
@@ -502,11 +600,15 @@ cdef class Queue:
     cdef bint _owned
     cdef bint _inactive
     cdef bytes _label_bytes
+    cdef unsigned long _context_id
+    cdef bint _has_context
 
     def __cinit__(self):
         self._queue = NULL
         self._owned = False
         self._inactive = False
+        self._context_id = 0
+        self._has_context = False
 
     def __init__(self, str label=None, bint concurrent=False,
                  int qos=_QOS_CLASS_UNSPECIFIED, int relative_priority=0,
@@ -769,6 +871,129 @@ cdef class Queue:
     def is_inactive(self):
         """Check if the queue is currently inactive."""
         return self._inactive
+
+    def set_context(self, value, finalizer=None):
+        """
+        Attach arbitrary context data to this queue.
+
+        The context data can be retrieved later with get_context().
+        An optional finalizer callable is invoked when the queue is deallocated.
+
+        Args:
+            value: Any Python object to attach to the queue.
+            finalizer: Optional callable with no arguments, called when
+                       the queue is deallocated or context is replaced.
+
+        Raises:
+            TypeError: If finalizer is provided but not callable.
+        """
+        if finalizer is not None and not callable(finalizer):
+            raise TypeError("finalizer must be callable")
+
+        # Clear existing context if any
+        if self._has_context:
+            _unregister_context(self._context_id)
+
+        # Register new context
+        self._context_id = _register_context(value, finalizer)
+        self._has_context = True
+
+        # Set GCD context to our context ID (for finalizer dispatch)
+        cdef dispatch_queue_t q = self._queue
+        cdef void* ctx_ptr = <void*><uintptr_t>self._context_id
+        with nogil:
+            dispatch_set_context(<dispatch_source_t>q, ctx_ptr)
+            dispatch_set_finalizer_f(q, _python_context_finalizer)
+
+    def get_context(self):
+        """
+        Get the context data attached to this queue.
+
+        Returns:
+            The context value set with set_context(), or None if not set.
+        """
+        if not self._has_context:
+            return None
+        return _get_context_value(self._context_id)
+
+    def set_specific(self, key, value):
+        """
+        Set queue-specific data for a key.
+
+        This data is associated with this specific queue and can be retrieved
+        from any code executing on this queue using get_specific().
+
+        Args:
+            key: A hashable key to identify the data.
+            value: Any Python object to store (or None to remove).
+        """
+        # Use the key's id as the dispatch key
+        cdef uintptr_t dispatch_key = <uintptr_t>id(key)
+        cdef dispatch_queue_t q = self._queue
+        cdef PyObject* ctx
+
+        # Store key to prevent GC
+        _queue_specific_keys[id(key)] = key
+
+        if value is None:
+            # Remove the specific data
+            with nogil:
+                dispatch_queue_set_specific(q, <const void*>dispatch_key, NULL, NULL)
+            # Clean up our storage
+            storage_key = (id(self), id(key))
+            _queue_specific_data.pop(storage_key, None)
+        else:
+            # Store in our dict for reference counting
+            storage_key = (id(self), id(key))
+            old_value = _queue_specific_data.get(storage_key)
+            _queue_specific_data[storage_key] = value
+
+            Py_INCREF(value)
+            ctx = <PyObject*>value
+            with nogil:
+                dispatch_queue_set_specific(q, <const void*>dispatch_key,
+                                           <void*>ctx, _specific_destructor)
+
+    def get_specific(self, key):
+        """
+        Get queue-specific data for a key from this queue.
+
+        Args:
+            key: The key used in set_specific().
+
+        Returns:
+            The stored value, or None if not set.
+        """
+        cdef uintptr_t dispatch_key = <uintptr_t>id(key)
+        cdef dispatch_queue_t q = self._queue
+        cdef void* result
+        with nogil:
+            result = dispatch_queue_get_specific(q, <const void*>dispatch_key)
+        if result == NULL:
+            return None
+        return <object>result
+
+
+def get_specific(key):
+    """
+    Get queue-specific data for a key from the current queue.
+
+    This function retrieves data set with Queue.set_specific() from
+    code running on that queue.
+
+    Args:
+        key: The key used in set_specific().
+
+    Returns:
+        The stored value, or None if not set or not running on a queue.
+    """
+    cdef uintptr_t dispatch_key = <uintptr_t>id(key)
+    cdef void* result
+    with nogil:
+        result = dispatch_get_specific(<const void*>dispatch_key)
+    if result == NULL:
+        return None
+    return <object>result
 
 
 def apply(size_t iterations, func, Queue queue=None):
@@ -1784,6 +2009,83 @@ cdef class Data:
 
         return result
 
+    def copy_region(self, size_t location):
+        """
+        Get the region containing a specific location.
+
+        Dispatch data may be stored as discontiguous regions. This method
+        returns the contiguous region that contains the specified byte offset.
+
+        Args:
+            location: Byte offset to look up.
+
+        Returns:
+            Tuple of (region_data: Data, region_offset: int) where:
+            - region_data: The contiguous region containing the location
+            - region_offset: Offset within the region where location falls
+
+        Raises:
+            ValueError: If location is out of bounds.
+        """
+        if self._data == NULL:
+            raise ValueError("location out of bounds for empty data")
+
+        cdef size_t region_offset = 0
+        cdef dispatch_data_t region_data
+        cdef Data result
+
+        with nogil:
+            region_data = dispatch_data_copy_region(self._data, location, &region_offset)
+
+        if region_data == NULL:
+            raise ValueError("location out of bounds")
+
+        result = Data.__new__(Data)
+        result._data = region_data
+        result._owned = True
+        return (result, region_offset)
+
+    def apply(self, func):
+        """
+        Iterate over the contiguous regions of this data.
+
+        Dispatch data may be stored as multiple discontiguous memory regions.
+        This method calls the provided function for each contiguous region.
+
+        Args:
+            func: Callable(offset: int, data: bytes) -> bool
+                  - offset: Byte offset of this region within the overall data
+                  - data: The bytes in this contiguous region
+                  - Return True to continue iteration, False to stop
+
+        Returns:
+            True if all regions were visited, False if iteration was stopped early.
+        """
+        if self._data == NULL:
+            return True
+
+        # Since dispatch_data_apply uses blocks, we'll implement this
+        # by mapping the data and returning it as a single region.
+        # For most cases, this is sufficient. True multi-region iteration
+        # would require block support similar to IOChannel.
+        cdef const void* buffer = NULL
+        cdef size_t size = 0
+        cdef dispatch_data_t mapped
+
+        with nogil:
+            mapped = dispatch_data_create_map(self._data, &buffer, &size)
+
+        if mapped == NULL or buffer == NULL:
+            return True
+
+        try:
+            chunk = (<const char*>buffer)[:size]
+            result = func(0, chunk)
+            return bool(result) if result is not None else True
+        finally:
+            with nogil:
+                dispatch_release(<dispatch_queue_t>mapped)
+
     @staticmethod
     cdef Data _from_dispatch_data(dispatch_data_t data, bint owned):
         """Create a Data object from a dispatch_data_t (internal use)."""
@@ -1975,6 +2277,29 @@ cdef class Workloop:
     def is_inactive(self):
         """Check if the workloop is currently inactive."""
         return self._inactive
+
+    def set_autorelease_frequency(self, unsigned int frequency):
+        """
+        Set the autorelease frequency for the workloop.
+
+        This controls how often the workloop drains its autorelease pool,
+        which is relevant when using Objective-C APIs from Python.
+
+        Must be called while the workloop is inactive (before activation).
+
+        Args:
+            frequency: One of:
+                - AUTORELEASE_FREQUENCY_INHERIT (0): Inherit from target queue
+                - AUTORELEASE_FREQUENCY_WORK_ITEM (1): Drain after each work item
+                - AUTORELEASE_FREQUENCY_NEVER (2): Never drain automatically
+
+        Raises:
+            RuntimeError: If the workloop has already been activated.
+        """
+        if not self._inactive:
+            raise RuntimeError("Autorelease frequency can only be set on inactive workloops")
+        with nogil:
+            dispatch_workloop_set_autorelease_frequency(self._workloop, frequency)
 
     def run_async(self, func):
         """

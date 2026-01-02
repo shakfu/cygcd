@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3]
+
+### Added
+
+#### Queue Context and Specific Data
+
+- `Queue.set_context(value, finalizer)` - Attach arbitrary context data to a queue
+- `Queue.get_context()` - Retrieve context data from a queue
+- `Queue.set_specific(key, value)` - Set queue-specific data (thread-local-like storage)
+- `Queue.get_specific(key)` - Get queue-specific data from a queue
+- `get_specific(key)` - Get queue-specific data from the current queue
+
+#### Data Methods
+
+- `Data.copy_region(location)` - Get contiguous region containing a location
+- `Data.apply(func)` - Iterate over contiguous regions of data
+
+#### Workloop Enhancements
+
+- `Workloop.set_autorelease_frequency(frequency)` - Configure autorelease pool drain frequency
+- `AUTORELEASE_FREQUENCY_INHERIT` - Inherit from target queue
+- `AUTORELEASE_FREQUENCY_WORK_ITEM` - Drain after each work item
+- `AUTORELEASE_FREQUENCY_NEVER` - Never drain automatically
+
 ## [0.1.2]
 
 ### Added
