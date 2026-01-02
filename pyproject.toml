@@ -45,7 +45,7 @@ build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
 wheel.packages = ["src/cygcd"]
-wheel.exclude = ["*.pyx"]
+wheel.exclude = ["*.pyx", "CMakeLists.txt"]
 sdist.exclude = ["docs/", "examples/c/"]
 
 [tool.ruff]
