@@ -5,43 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-## [0.1.4]
-
-### Added
-
-#### Linux Support
-
-- Linux support via open-source libdispatch library
-- Platform detection (`_IS_MACOS`, `_IS_LINUX`) for conditional behavior
-- Build system support for libdispatch on Linux via pkg-config
-- Platform-conditional tests with `@macos_only` decorator
-
-### Changed
-
-- CMakeLists.txt now conditionally enables OBJC language (macOS only)
-- Module CMakeLists.txt uses platform-specific build configuration
-- QOS class parameters are silently ignored on Linux (no-op)
-- Updated package description and keywords to include Linux
-
-### Platform Availability
-
-| Feature | macOS | Linux |
-|---------|-------|-------|
-| Queue, Group, Semaphore, Once | Full | Full |
-| Timer, Sources (Signal/Read/Write/Process) | Full | Full |
-| apply(), read_async(), write_async(), Data | Full | Full |
-| QOS classes | Full | Silently ignored |
-| IOChannel | Full | NotImplementedError |
-| Workloop | Full | NotImplementedError |
-
-### Notes
-
-- Linux requires `libdispatch-dev` package (e.g., `sudo apt-get install libdispatch-dev`)
-- IOChannel and Workloop raise `NotImplementedError` on Linux due to Objective-C blocks requirement
-- Core GCD functionality (queues, groups, semaphores, timers, sources) works identically on both platforms
-
 ## [0.1.3]
 
 ### Added

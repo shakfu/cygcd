@@ -3,18 +3,10 @@
 import os
 import signal
 import subprocess
-import sys
 import time
 import threading
 import pytest
 import cygcd
-
-# Platform detection
-IS_MACOS = sys.platform == 'darwin'
-IS_LINUX = sys.platform.startswith('linux')
-
-# Decorators for platform-specific tests
-macos_only = pytest.mark.skipif(not IS_MACOS, reason="macOS only")
 
 
 class TestQueue:
@@ -1169,9 +1161,8 @@ class TestAsyncIO:
             os.close(w)
 
 
-@macos_only
 class TestWorkloop:
-    """Tests for Workloop class (macOS only)."""
+    """Tests for Workloop class."""
 
     def test_create_workloop(self):
         """Test creating a workloop."""
@@ -1242,9 +1233,8 @@ class TestIOConstants:
         assert cygcd.IO_STOP == 0x1
 
 
-@macos_only
 class TestIOChannel:
-    """Tests for IOChannel class (macOS only)."""
+    """Tests for IOChannel class."""
 
     def test_create_stream_channel(self):
         """Test creating a stream I/O channel."""
@@ -1766,9 +1756,8 @@ class TestDataExtras:
         assert not called[0]
 
 
-@macos_only
 class TestWorkloopAutorelease:
-    """Tests for Workloop autorelease frequency (macOS only)."""
+    """Tests for Workloop autorelease frequency."""
 
     def test_autorelease_frequency_constants(self):
         """Test autorelease frequency constants exist."""
@@ -1800,30 +1789,3 @@ class TestWorkloopAutorelease:
         wl = cygcd.Workloop("autorelease.active")
         with pytest.raises(RuntimeError):
             wl.set_autorelease_frequency(cygcd.AUTORELEASE_FREQUENCY_NEVER)
-
-
-class TestLinuxPlatform:
-    """Tests for Linux platform behavior."""
-
-    @pytest.mark.skipif(not IS_LINUX, reason="Linux only")
-    def test_workloop_not_available_on_linux(self):
-        """Test that Workloop raises NotImplementedError on Linux."""
-        with pytest.raises(NotImplementedError):
-            cygcd.Workloop("test")
-
-    @pytest.mark.skipif(not IS_LINUX, reason="Linux only")
-    def test_iochannel_not_available_on_linux(self):
-        """Test that IOChannel raises NotImplementedError on Linux."""
-        with pytest.raises(NotImplementedError):
-            cygcd.IOChannel(0, cygcd.IO_STREAM)
-
-    def test_qos_accepted_on_all_platforms(self):
-        """Test QOS values are accepted (silently ignored on Linux)."""
-        # QOS should be accepted on both macOS and Linux
-        q = cygcd.Queue("test.qos", qos=cygcd.QOS_CLASS_UTILITY)
-        assert q is not None
-        assert q.label == "test.qos"
-        # Verify queue works
-        results = []
-        q.run_sync(lambda: results.append(1))
-        assert results == [1]
