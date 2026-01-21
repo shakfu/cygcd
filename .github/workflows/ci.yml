@@ -1,0 +1,117 @@
+name: CI
+
+on: [workflow_dispatch]
+  # push:
+  #   branches: [main]
+  #   tags: ['v*']
+  # pull_request:
+  #   branches: [main]
+  # workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build and Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install libdispatch (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdispatch-dev
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build pytest cython scikit-build-core
+
+      - name: Build package
+        run: python -m build
+
+      - name: Install package
+        run: pip install dist/*.whl
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 14
+
+      - name: Upload sdist artifact (once)
+        if: matrix.os == 'macos-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          retention-days: 14
+
+  aggregate-artifacts:
+    name: Aggregate Build Artifacts
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: always() && needs.build-and-test.result == 'success'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Organize artifacts
+        run: |
+          mkdir -p dist/wheels
+          find all-artifacts -name "*.whl" -exec cp {} dist/wheels/ \;
+          find all-artifacts -name "*.tar.gz" -exec cp {} dist/ \;
+          echo "Collected artifacts:"
+          ls -la dist/
+          ls -la dist/wheels/
+
+      - name: Upload combined artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cygcd-all-platforms
+          path: dist/
+          retention-days: 30
+
+  # Optional: publish to PyPI on tag
+  publish:
+    name: Publish to PyPI
+    needs: [build-and-test, aggregate-artifacts]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cygcd
+
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: cygcd-all-platforms
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true

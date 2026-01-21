@@ -1,26 +1,27 @@
 [project]
 name = "cygcd"
-version = "0.1.3"
-description = "Python wrapper for macOS Grand Central Dispatch (GCD)"
+version = "0.1.4"
+description = "Python wrapper for Grand Central Dispatch (GCD) - macOS and Linux"
 readme = "README.md"
 authors = [
-    { name = "Shakeeb Alireza", email = "me@example.org" }
+    { name = "Shakeeb Alireza", email = "shakfu@users.noreply.github.com" }
 ]
 license = {text = "MIT"}
-requires-python = ">=3.9"
-keywords = ["gcd", "grand-central-dispatch", "macos", "concurrency", "async", "dispatch"]
+requires-python = ">=3.10"
+keywords = ["gcd", "grand-central-dispatch", "macos", "linux", "concurrency", "async", "dispatch"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Cython",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Operating System Kernels :: BSD",
 ]

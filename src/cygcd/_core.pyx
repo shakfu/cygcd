@@ -10,6 +10,10 @@ from posix.types cimport off_t
 from cpython.ref cimport PyObject, Py_INCREF, Py_DECREF
 from cpython.exc cimport PyErr_Occurred, PyErr_Print
 
+import sys as _sys
+_IS_MACOS = _sys.platform == 'darwin'
+_IS_LINUX = _sys.platform.startswith('linux')
+
 # Time constants
 DEF NSEC_PER_SEC = 1000000000
 DEF NSEC_PER_MSEC = 1000000
@@ -304,10 +308,11 @@ cdef extern from "dispatch/dispatch.h" nogil:
                                               size_t* offset_ptr)
 
 
-# Inline Objective-C code for block support
-# This enables dispatch_io functions which require ObjC blocks
+# Inline Objective-C code for block support (macOS only)
+# On Linux, these are stubs since blocks are not available without libBlocksRuntime
 cdef extern from *:
     """
+    #ifdef CYGCD_MACOS
     #import <dispatch/dispatch.h>
     #import <Block.h>
 
@@ -324,16 +329,6 @@ cdef extern from *:
             _cygcd_invoke_io_callback(cb_id, done, data, error);
         };
         return Block_copy(block);
-    }
-
-    // Create a cleanup handler block
-    static inline void* _cygcd_create_cleanup_block(unsigned long cb_id) {
-        dispatch_io_handler_t block = ^(bool done, dispatch_data_t data, int error) {
-            // Cleanup handler signature differs - it receives (int error) only
-            // But dispatch_io_create expects the same block type
-            // Actually, cleanup_handler is void(^)(int error)
-        };
-        return NULL;  // Will implement properly below
     }
 
     // Proper cleanup block type
@@ -360,6 +355,13 @@ cdef extern from *:
             Block_release(block);
         }
     }
+    #else
+    // Linux stubs - blocks not available without libBlocksRuntime
+    static inline void* _cygcd_create_io_block(unsigned long cb_id) { return NULL; }
+    static inline void* _cygcd_create_cleanup_block_v2(unsigned long cb_id) { return NULL; }
+    static inline void* _cygcd_create_barrier_block(unsigned long cb_id) { return NULL; }
+    static inline void _cygcd_release_block(void* block) {}
+    #endif
     """
     void* _cygcd_create_io_block(unsigned long cb_id) nogil
     void* _cygcd_create_cleanup_block_v2(unsigned long cb_id) nogil
@@ -638,8 +640,8 @@ cdef class Queue:
         else:
             attr = NULL  # DISPATCH_QUEUE_SERIAL
 
-        # Apply QOS if specified
-        if qos != _QOS_CLASS_UNSPECIFIED:
+        # Apply QOS if specified (macOS only, silently ignored on Linux)
+        if qos != _QOS_CLASS_UNSPECIFIED and _IS_MACOS:
             with nogil:
                 attr = dispatch_queue_attr_make_with_qos_class(
                     attr, <unsigned int>qos, relative_priority)
@@ -2232,7 +2234,15 @@ cdef class Workloop:
             label: String label for debugging.
             inactive: If True, create in inactive state. Must call activate()
                       before the workloop will process tasks.
+
+        Raises:
+            NotImplementedError: On Linux (Workloop is macOS-only).
         """
+        if not _IS_MACOS:
+            raise NotImplementedError(
+                "Workloop is only available on macOS. Use Queue instead."
+            )
+
         cdef const char* c_label = NULL
 
         if label is not None:
@@ -2414,9 +2424,15 @@ cdef class IOChannel:
                              is fully closed. error is 0 on success.
 
         Raises:
+            NotImplementedError: On Linux (IOChannel requires macOS blocks support).
             RuntimeError: If channel creation fails.
             TypeError: If cleanup_handler is provided but not callable.
         """
+        if not _IS_MACOS:
+            raise NotImplementedError(
+                "IOChannel requires macOS. Use read_async() and write_async() instead."
+            )
+
         cdef dispatch_queue_t q
         cdef void* cleanup_block = NULL
 

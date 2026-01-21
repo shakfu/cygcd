@@ -1,8 +1,10 @@
 # cygcd
 
-Python wrapper for Apple's Grand Central Dispatch (GCD) framework on macOS.
+Python wrapper for Grand Central Dispatch (GCD) on macOS and Linux.
 
 GCD provides a powerful API for concurrent programming, allowing you to execute tasks asynchronously on system-managed thread pools. This wrapper exposes the core GCD primitives to Python with proper GIL handling for true parallelism.
+
+On macOS, cygcd uses the native GCD framework. On Linux, it uses the open-source [libdispatch](https://github.com/apple/swift-corelibs-libdispatch) library.
 
 ## Installation
 
@@ -11,10 +13,25 @@ pip install cygcd
 
 # or
 
-uv add gcd
+uv add cygcd
 ```
 
-To build
+### Linux Prerequisites
+
+On Linux, install libdispatch before installing cygcd:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install libdispatch-dev
+
+# Fedora
+sudo dnf install libdispatch-devel
+
+# Arch Linux
+sudo pacman -S libdispatch
+```
+
+### Building from Source
 
 ```bash
 git clone https://github.com/shakfu/cygcd.git
@@ -22,7 +39,10 @@ cd cygcd
 make
 ```
 
-Requires macOS and Python 3.9+.
+### Requirements
+
+- **macOS**: macOS 10.12+ and Python 3.10+
+- **Linux**: libdispatch and Python 3.10+
 
 ## Quick Start
 
@@ -45,18 +65,20 @@ This library provides multiple primitives for different concurrency patterns. He
 
 ### Feature Comparison
 
-| Feature | Purpose | Use When |
-|---------|---------|----------|
-| **Queue** | Task scheduling | You need to run code on background threads or serialize access to a resource |
-| **Group** | Track multiple tasks | You need to wait for several async operations to complete |
-| **Semaphore** | Resource limiting | You need to limit concurrent access (connection pools, rate limiting) |
-| **Timer** | Periodic execution | You need recurring tasks or delayed one-shot execution |
-| **IOChannel** | High-performance file I/O | You're reading/writing large files and need chunked, async I/O |
-| **read_async/write_async** | Simple async I/O | You need basic async file operations without chunking |
-| **ReadSource/WriteSource** | FD monitoring | You need to know when a file descriptor is readable/writable |
-| **SignalSource** | Signal handling | You need to handle Unix signals asynchronously |
-| **ProcessSource** | Process monitoring | You need to track child process lifecycle events |
-| **Workloop** | Priority-sensitive work | You have mixed-priority tasks sharing resources (rare, mostly real-time/UI) |
+| Feature | Purpose | Use When | Platform |
+|---------|---------|----------|----------|
+| **Queue** | Task scheduling | You need to run code on background threads or serialize access to a resource | All |
+| **Group** | Track multiple tasks | You need to wait for several async operations to complete | All |
+| **Semaphore** | Resource limiting | You need to limit concurrent access (connection pools, rate limiting) | All |
+| **Timer** | Periodic execution | You need recurring tasks or delayed one-shot execution | All |
+| **IOChannel** | High-performance file I/O | You're reading/writing large files and need chunked, async I/O | macOS only |
+| **read_async/write_async** | Simple async I/O | You need basic async file operations without chunking | All |
+| **ReadSource/WriteSource** | FD monitoring | You need to know when a file descriptor is readable/writable | All |
+| **SignalSource** | Signal handling | You need to handle Unix signals asynchronously | All |
+| **ProcessSource** | Process monitoring | You need to track child process lifecycle events | All |
+| **Workloop** | Priority-sensitive work | You have mixed-priority tasks sharing resources (rare, mostly real-time/UI) | macOS only |
+
+> **Note:** QOS (Quality of Service) classes are silently ignored on Linux. IOChannel and Workloop raise `NotImplementedError` on Linux.
 
 ### Common Patterns
 
@@ -125,10 +147,12 @@ source.start()
 **Queue vs Workloop**
 - Use `Queue` for most cases - simpler and sufficient
 - Use `Workloop` when priority inversion is a concern (real-time systems, UI responsiveness)
+- On Linux, use `Queue` (Workloop is not available)
 
 **IOChannel vs read_async/write_async**
 - Use `read_async`/`write_async` for simple one-shot operations
 - Use `IOChannel` when you need chunked delivery, flow control, or multiple operations on the same file
+- On Linux, use `read_async`/`write_async` (IOChannel is not available)
 
 **Timer vs Queue.after()**
 - Use `after()` for one-shot delayed execution
@@ -740,6 +764,7 @@ Timer constructor parameters:
 
 Note: Work cannot be submitted to inactive workloops (raises RuntimeError).
 Note: `set_autorelease_frequency` must be called before `activate()`.
+Note: **macOS only** - raises `NotImplementedError` on Linux. Use `Queue` instead.
 
 ### IOChannel
 
@@ -766,6 +791,8 @@ IOChannel callbacks:
 - Read/write handlers receive `(done: bool, data: bytes, error: int)`
 - `done=True` indicates operation complete; handler won't be called again
 - Barrier handlers receive no arguments
+
+Note: **macOS only** - raises `NotImplementedError` on Linux. Use `read_async`/`write_async` instead.
 
 ### Functions
 
@@ -848,6 +875,13 @@ See `docs/` for detailed guides on specific use cases:
 - Callbacks are executed with the GIL held (Python code is thread-safe)
 - Global queues are system-managed and should not be released
 - Avoid `run_sync()` on a serial queue from within that queue (deadlock)
+
+### Linux-Specific Notes
+
+- QOS (Quality of Service) classes are accepted but silently ignored on Linux
+- `IOChannel` raises `NotImplementedError` on Linux (use `read_async`/`write_async` instead)
+- `Workloop` raises `NotImplementedError` on Linux (use `Queue` instead)
+- Core functionality (queues, groups, semaphores, timers, sources) works identically on both platforms
 
 ## License
 
