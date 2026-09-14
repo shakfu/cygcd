@@ -1,6 +1,16 @@
 # TODO
 
-## API Coverage
+## Critical
+
+## High
+
+## Medium
+
+## Low
+
+## Done
+
+### API Coverage
 
 - [x] Queues (serial, concurrent, global, main, inactive, QOS, target hierarchy)
 - [x] Execution (async, sync, barrier, after, apply)
